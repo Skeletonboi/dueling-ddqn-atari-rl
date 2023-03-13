@@ -13,3 +13,7 @@ class ExperienceReplay():
         idxs = np.random.choice(min(batch_size, len(self.buffer)), batch_size)
         batch_s, batch_ns, batch_r, batch_done = zip(*[self.buffer[i] for i in idxs])
         return batch_s, batch_ns, batch_r, batch_done
+
+class PrioritizedExperienceReplay():
+    def __init__(self):
+        return
