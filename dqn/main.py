@@ -71,13 +71,20 @@ def main():
             exp_replay.insert(s, next_s, a, rew, done)
             # learn 
             if exp_replay.size() > BATCH_SIZE:
-                exp_s, exp_ns, exp_a, exp_r, exp_d = exp_replay.sample_experience(BATCH_SIZE)
+                batch_s, batch_ns, batch_a, batch_r, batch_d = exp_replay.sample_experience(BATCH_SIZE)
                 # update target net
                 if i % UPDATE_STEPS == 0:
                     target_qnet.load_state_dict(online_qnet.state_dict())
+                # with torch.no_grad():
+                q_pred = online_qnet.forward(batch_s)
+                q_targ_ns = target_qnet.forward(batch_ns)
+                max_a_ns = torch.argmax(q_targ_ns, dim=1, keepdim=True)
+                q_targ = torch.add(batch_r, GAMMA * (1 - batch_d) * q_targ_ns.gather(dim=1, index=max_a_ns))
                 
-
-                
+                loss = online_qnet.loss_func(q_pred.gather(dim=1, index=batch_a), q_targ)
+                online_qnet.optimizer.zero_grad()
+                loss.backward()
+                online_qnet.optimizer.step()
             
         EPS = EPS * EPS_DECAY
         print('NEW EPS:', EPS)
