@@ -13,7 +13,7 @@ class ExperienceReplay():
         self.buffer.append((state, next_state, action, reward, done))
 
     def sample_experience(self, batch_size, device):    
-        idxs = np.random.choice(min(batch_size, len(self.buffer)), batch_size)
+        idxs = np.random.choice(self.size(), batch_size)
         batch_s, batch_ns, batch_a, batch_r, batch_d = zip(*[self.buffer[i] for i in idxs])
 
         batch_s = torch.tensor(batch_s).to(device)
