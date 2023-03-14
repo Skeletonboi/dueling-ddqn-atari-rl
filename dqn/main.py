@@ -33,8 +33,9 @@ class DQN(nn.Module):
         return q
 
 def main():
-    # Set seed
     torch.manual_seed(0)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device='cpu'
     # Hyperparameters
     N_EPOCH = 50
     N_STEPS = 200
@@ -46,7 +47,7 @@ def main():
 
     GAMMA = 0.99
     LR = 0.001
-    EPS = 0.9
+    EPS = 0.5
     EPS_DECAY = 0.99
     # Initialize env
     env = gym.make('CartPole-v1')
@@ -54,24 +55,25 @@ def main():
     n_states = env.observation_space.shape[0]
     n_actions = env.action_space.n
     # Initialize online and target q-networks and exp. replay buffer
-    online_qnet = DQN(fc_size_list=[n_states, 64, n_actions], activation=nn.ReLU(), lr=LR, loss_func=nn.MSELoss())
-    target_qnet = DQN(fc_size_list=[n_states, 64, n_actions], activation=nn.ReLU(), lr=LR, loss_func=nn.MSELoss())
+    online_qnet = DQN(fc_size_list=[n_states, 64, n_actions], activation=nn.ReLU(), lr=LR, loss_func=nn.MSELoss()).to(device)
+    target_qnet = DQN(fc_size_list=[n_states, 64, n_actions], activation=nn.ReLU(), lr=LR, loss_func=nn.MSELoss()).to(device)
     exp_replay = ExperienceReplay(max_buffer_size=BUFFER_SIZE)
     # Main loop
     for i in tqdm(range(N_EPOCH)):
         # Train one episode
         s, info = env.reset()
+        eps_rew = 0
         for i in range(N_STEPS):
             # eps-greedy action sampling
             if np.random.uniform(0,1) < EPS:
                 a = np.random.choice(n_actions)
             else:
-                a = torch.argmax(online_qnet(torch.from_numpy(s))).item()
+                a = torch.argmax(online_qnet(torch.from_numpy(s).to(device))).item()
             next_s, rew, done, trunc, info = env.step(a)
             exp_replay.insert(s, next_s, a, rew, done)
             # learn 
             if exp_replay.size() > BATCH_SIZE:
-                batch_s, batch_ns, batch_a, batch_r, batch_d = exp_replay.sample_experience(BATCH_SIZE)
+                batch_s, batch_ns, batch_a, batch_r, batch_d = exp_replay.sample_experience(BATCH_SIZE, device)
                 # update target net
                 if i % UPDATE_STEPS == 0:
                     target_qnet.load_state_dict(online_qnet.state_dict())
@@ -80,12 +82,13 @@ def main():
                 q_targ_ns = target_qnet.forward(batch_ns)
                 max_a_ns = torch.argmax(q_targ_ns, dim=1, keepdim=True)
                 q_targ = torch.add(batch_r, GAMMA * (1 - batch_d) * q_targ_ns.gather(dim=1, index=max_a_ns))
-                
-                loss = online_qnet.loss_func(q_pred.gather(dim=1, index=batch_a), q_targ)
+
+                loss = online_qnet.loss_func(q_pred.gather(dim=1, index=batch_a), q_targ).to(device)
                 online_qnet.optimizer.zero_grad()
                 loss.backward()
                 online_qnet.optimizer.step()
-            
+            eps_rew += rew
+        print('Eps. Rew.:', eps_rew)
         EPS = EPS * EPS_DECAY
         print('NEW EPS:', EPS)
 
