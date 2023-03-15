@@ -54,7 +54,6 @@ def main():
     random.seed(SEED)
     torch.manual_seed(SEED)
     np.random.seed(SEED)
-
     # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     device='cpu'
     
@@ -85,6 +84,7 @@ def main():
     target_qnet = DQN(fc_size_list=[n_states, 64, 256, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
     target_qnet.load_state_dict(online_qnet.state_dict())
     exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, n_actions)
+
     # Main loop
     accum_rew = []
     for epoch in tqdm(range(N_EPOCH)):
@@ -96,6 +96,7 @@ def main():
                 a = np.random.choice(n_actions)
             else:
                 a = torch.argmax(online_qnet(torch.from_numpy(s).to(device))).item()
+            # perform action and record
             next_s, rew, done, trunc, info = env.step(a)
             exp_replay.insert(s, next_s, a, rew, done)
             # learn 
@@ -104,12 +105,12 @@ def main():
                 # update target net
                 if i % UPDATE_STEPS == 0:
                     target_qnet.load_state_dict(online_qnet.state_dict())
-                
+                # compute q-target
                 q_pred = online_qnet.forward(batch_s)
                 with torch.no_grad():
                     q_targ_ns = target_qnet.forward(batch_ns)
                     q_targ = torch.add(batch_r, GAMMA * (1 - batch_d) * torch.max(q_targ_ns, dim=1, keepdim=True)[0])
-
+                # compute loss and backprop
                 loss = online_qnet.loss_func(q_pred.gather(dim=1, index=batch_a), q_targ).to(device)
                 online_qnet.optimizer.zero_grad()
                 loss.backward()
@@ -121,16 +122,17 @@ def main():
                 epsilon -= (INIT_EPS - FIN_EPS) / EXPLORE
             if done:
                 break
-        # lr = lr/(1 + LR_DECAY * epoch)
-        # for g in online_qnet.optimizer.param_groups:
-        #     g['lr'] = lr 
-        # print(lr)
-        # print(exp_replay.counter)
+
+        # Learning rate decay scheduling
+        lr = lr/(1 + LR_DECAY * epoch)
+        for g in online_qnet.optimizer.param_groups:
+            g['lr'] = lr 
+        # Evaluate model pure-greedy
         eps_rew = eval_model(online_qnet, env, device)
         accum_rew.append(eps_rew)
+        
         if epoch % 10 == 0:
             print('Eps. Rew.:', eps_rew)
-    
     fig = plt.figure()
     plt.plot(accum_rew)
     plt.savefig('accum_rew.png')
