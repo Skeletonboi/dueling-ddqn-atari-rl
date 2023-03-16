@@ -69,6 +69,7 @@ def main():
     GAMMA = 0.99
     INIT_LR = 0.002
     LR_DECAY = 0.0001
+    IS_LR_DECAY = False
     INIT_EPS = 0.1
     FIN_EPS = 0.0001
     EXPLORE = 20000
@@ -83,7 +84,7 @@ def main():
     online_qnet = DQN(fc_size_list=[n_states, 64, 256, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
     target_qnet = DQN(fc_size_list=[n_states, 64, 256, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
     target_qnet.load_state_dict(online_qnet.state_dict())
-    exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, n_actions)
+    exp_replay = ExperienceReplay(BUFFER_SIZE, n_states)
 
     # Main loop
     accum_rew = []
@@ -124,9 +125,10 @@ def main():
                 break
 
         # Learning rate decay scheduling
-        lr = lr/(1 + LR_DECAY * epoch)
-        for g in online_qnet.optimizer.param_groups:
-            g['lr'] = lr 
+        if IS_LR_DECAY:
+            lr = lr/(1 + LR_DECAY * epoch)
+            for g in online_qnet.optimizer.param_groups:
+                g['lr'] = lr 
         # Evaluate model pure-greedy
         eps_rew = eval_model(online_qnet, env, device)
         accum_rew.append(eps_rew)
@@ -135,7 +137,7 @@ def main():
             print('Eps. Rew.:', eps_rew)
     fig = plt.figure()
     plt.plot(accum_rew)
-    plt.savefig('accum_rew.png')
+    plt.savefig('./imgs/accum_rew.png')
     # plt.close(fig)
 
 
