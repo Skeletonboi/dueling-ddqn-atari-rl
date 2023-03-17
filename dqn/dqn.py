@@ -52,7 +52,7 @@ def eval_model(model, env, max_steps, n_actions):
     eps_rew = 0
     s, _ = env.reset()
     for i in range(max_steps):
-        a = model.sample_discrete_action(s, epsilon, n_actions)
+        a = model.sample_discrete_action(s, -1, n_actions)
         next_s, rew, done, _, _ = env.step(a)
         eps_rew += rew
         if done: break
