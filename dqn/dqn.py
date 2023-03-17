@@ -38,12 +38,12 @@ class DQN(nn.Module):
         q = self.fc_net(x)
         return q
 
-def eval_model(model, env, device):
+def eval_model(model, env, max_steps, device):
     eps_rew = 0
     s, _ = env.reset()
-    for i in range(200):
+    for i in range(max_steps):
         a = torch.argmax(model(torch.from_numpy(s).to(device))).item()
-        next_s, rew, done, trunc, info = env.step(a)
+        next_s, rew, done, _, _ = env.step(a)
         eps_rew += rew
         if done: break
         s = next_s
@@ -54,45 +54,58 @@ def main():
     random.seed(SEED)
     torch.manual_seed(SEED)
     np.random.seed(SEED)
-    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    device='cpu'
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # device='cpu'
     
     # Hyperparameters
-    N_EPOCH = 200
-    N_STEPS = 200
-    UPDATE_STEPS = 32
+    TOTAL_TIMESTEPS = int(2e5)
+    N_STEPS = 1000
+    UPDATE_STEPS = 1
+    UPDATE_TARGET = 4
 
-    N_ENVS = 16
-    BATCH_SIZE = 32
-    BUFFER_SIZE = 5000
+    BATCH_SIZE = 64
+    BUFFER_SIZE = 10000
 
     GAMMA = 0.99
-    INIT_LR = 0.002
-    LR_DECAY = 0.0001
-    IS_LR_DECAY = False
-    INIT_EPS = 0.1
-    FIN_EPS = 0.0001
-    EXPLORE = 20000
+    INIT_LR = 0.001
+    IS_LR_DECAY = True
+    LR_DECAY = 0.000001
+    INIT_EPS = 1.0
+    FIN_EPS = 0.01
+    EXPLORE = 80000
     epsilon = INIT_EPS
     lr = INIT_LR
+
     # Initialize env
-    env = gym.make('CartPole-v1')
-    # env = envpool.make('CartPole-v1', env_type='gym', num_envs=N_ENVS)
+    # env = gym.make('CartPole-v1')
+    env = gym.make("LunarLander-v2")
     n_states = env.observation_space.shape[0]
     n_actions = env.action_space.n
     # Initialize online and target q-networks and exp. replay buffer
-    online_qnet = DQN(fc_size_list=[n_states, 64, 256, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
-    target_qnet = DQN(fc_size_list=[n_states, 64, 256, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
+    online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
+    target_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
     target_qnet.load_state_dict(online_qnet.state_dict())
-    exp_replay = ExperienceReplay(BUFFER_SIZE, n_states)
+    exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, is_atari=False)
 
-    # Main loop
+    # Initialize counters
     accum_rew = []
-    for epoch in tqdm(range(N_EPOCH)):
-        # Train one episode
-        s, info = env.reset()
+    accum_eval_rew = []
+    accum_steps = []
+    epoch_counter = 0
+    step_counter = 0
+    lstep_counter = 0
+    pbar = tqdm(total=TOTAL_TIMESTEPS)
+    # main training loop
+    while step_counter < TOTAL_TIMESTEPS:
+        epoch_counter += 1
+        # reset environment
+        s, _ = env.reset()
+        eps_rew = 0
+        # train one episode
         for i in range(N_STEPS):
-            # eps-greedy action sampling
+            step_counter += 1
+            pbar.update()
+            # action sampling: eps-greedy
             if np.random.uniform(0,1) < epsilon:
                 a = np.random.choice(n_actions)
             else:
@@ -100,11 +113,13 @@ def main():
             # perform action and record
             next_s, rew, done, trunc, info = env.step(a)
             exp_replay.insert(s, next_s, a, rew, done)
+            eps_rew += rew
             # learn 
-            if exp_replay.counter > BATCH_SIZE:
+            if exp_replay.counter > BATCH_SIZE and (step_counter % UPDATE_STEPS == 0):
+                lstep_counter += 1
                 batch_s, batch_ns, batch_a, batch_r, batch_d = exp_replay.sample_experience(BATCH_SIZE, device)
                 # update target net
-                if i % UPDATE_STEPS == 0:
+                if lstep_counter % UPDATE_TARGET == 0:
                     target_qnet.load_state_dict(online_qnet.state_dict())
                 # compute q-target
                 q_pred = online_qnet.forward(batch_s)
@@ -123,23 +138,36 @@ def main():
                 epsilon -= (INIT_EPS - FIN_EPS) / EXPLORE
             if done:
                 break
-
         # Learning rate decay scheduling
         if IS_LR_DECAY:
-            lr = lr/(1 + LR_DECAY * epoch)
+            lr = lr/(1 + LR_DECAY * epoch_counter)
             for g in online_qnet.optimizer.param_groups:
                 g['lr'] = lr 
-        # Evaluate model pure-greedy
-        eps_rew = eval_model(online_qnet, env, device)
+        # Accumulate
         accum_rew.append(eps_rew)
-        
-        if epoch % 10 == 0:
-            print('Eps. Rew.:', eps_rew)
-    fig = plt.figure()
-    plt.plot(accum_rew)
-    plt.savefig('./imgs/accum_rew.png')
-    # plt.close(fig)
+        accum_steps.append(step_counter)
+        if epoch_counter % 10 == 0:
+            # Evaluate model using deterministic greedy policy
+            eval_rew = eval_model(online_qnet, env, N_STEPS, device)
+            accum_eval_rew.append(eval_rew)
 
+            print(f'Step Counter: {step_counter}')
+            print(f'Epoch Counter: {epoch_counter}')
+            print(f'Epsilon: {epsilon}')
+            print(f'Rolling Eps. Rew.: {np.mean(accum_rew[-10:])}')
+            print(f'Eval. Rew.: {eval_rew}')
+            if IS_LR_DECAY:
+                print(f'LR: {lr}')
+
+    # Plotting
+    plt.figure()
+    plt.plot(accum_steps, accum_rew)
+    plt.ylim(-500, 200)
+    plt.savefig('./imgs/accum_rew.png')
+    plt.close()
+    plt.plot(accum_eval_rew)
+    plt.ylim(-500, 200)
+    plt.savefig('./imgs/accum_eval_rew.png')
 
 if __name__ == '__main__':
     main()
