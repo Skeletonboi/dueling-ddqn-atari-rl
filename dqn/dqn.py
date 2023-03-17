@@ -9,6 +9,7 @@ import numpy as np
 import gym
 
 import random
+import copy
 from tqdm import tqdm
 from replay_buffers import ExperienceReplay
 
@@ -18,12 +19,12 @@ import matplotlib.pyplot as plt
 # import envpool
 
 class DQN(nn.Module):
-    def __init__(self, fc_size_list, activation, lr, loss_func, device):
+    def __init__(self, fc_size_list, activation, lr, loss_func, optim, device):
         super(DQN, self).__init__()
         self.fc_net = self.create_fc_net(fc_size_list, activation)
 
         self.loss_func = loss_func
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        self.optimizer = optim(self.parameters(), lr=lr)
         self.device = device
         self.to(device)
 
@@ -91,8 +92,9 @@ def main():
     n_states = env.observation_space.shape[0]
     n_actions = env.action_space.n
     # Initialize online and target q-networks and exp. replay buffer
-    online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss(), device=device)
-    target_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss(), device=device)
+    online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), 
+                      lr=INIT_LR, loss_func=nn.MSELoss(), optim=torch.optim.Adam, device=device)
+    target_qnet = copy.deepcopy(online_qnet)
     target_qnet.load_state_dict(online_qnet.state_dict())
     exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, is_atari=False)
 
