@@ -9,6 +9,7 @@ import numpy as np
 import gym
 
 import random
+import copy
 from tqdm import tqdm
 from replay_buffers import ExperienceReplay
 
@@ -18,12 +19,14 @@ import matplotlib.pyplot as plt
 # import envpool
 
 class DQN(nn.Module):
-    def __init__(self, fc_size_list, activation, lr, loss_func):
+    def __init__(self, fc_size_list, activation, lr, loss_func, optim, device):
         super(DQN, self).__init__()
         self.fc_net = self.create_fc_net(fc_size_list, activation)
 
         self.loss_func = loss_func
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        self.optimizer = optim(self.parameters(), lr=lr)
+        self.device = device
+        self.to(device)
 
     def create_fc_net(self, fc_size_list, activation):
         fc_layers = []
@@ -38,11 +41,18 @@ class DQN(nn.Module):
         q = self.fc_net(x)
         return q
 
-def eval_model(model, env, max_steps, device):
+    def sample_discrete_action(self, s, epsilon, n_actions):
+        if np.random.uniform(0,1) < epsilon:
+            a = np.random.choice(n_actions)
+        else:
+            a = torch.argmax(self.forward(torch.from_numpy(s).to(self.device))).item()
+        return a
+
+def eval_model(model, env, max_steps, n_actions):
     eps_rew = 0
     s, _ = env.reset()
     for i in range(max_steps):
-        a = torch.argmax(model(torch.from_numpy(s).to(device))).item()
+        a = model.sample_discrete_action(s, epsilon, n_actions)
         next_s, rew, done, _, _ = env.step(a)
         eps_rew += rew
         if done: break
@@ -82,8 +92,9 @@ def main():
     n_states = env.observation_space.shape[0]
     n_actions = env.action_space.n
     # Initialize online and target q-networks and exp. replay buffer
-    online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
-    target_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), lr=INIT_LR, loss_func=nn.MSELoss()).to(device)
+    online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), 
+                      lr=INIT_LR, loss_func=nn.MSELoss(), optim=torch.optim.Adam, device=device)
+    target_qnet = copy.deepcopy(online_qnet)
     target_qnet.load_state_dict(online_qnet.state_dict())
     exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, is_atari=False)
 
@@ -106,10 +117,7 @@ def main():
             step_counter += 1
             pbar.update()
             # action sampling: eps-greedy
-            if np.random.uniform(0,1) < epsilon:
-                a = np.random.choice(n_actions)
-            else:
-                a = torch.argmax(online_qnet(torch.from_numpy(s).to(device))).item()
+            a = online_qnet.sample_discrete_action(s, epsilon, n_actions)
             # perform action and record
             next_s, rew, done, trunc, info = env.step(a)
             exp_replay.insert(s, next_s, a, rew, done)
@@ -117,10 +125,11 @@ def main():
             # learn 
             if exp_replay.counter > BATCH_SIZE and (step_counter % UPDATE_STEPS == 0):
                 lstep_counter += 1
-                batch_s, batch_ns, batch_a, batch_r, batch_d = exp_replay.sample_experience(BATCH_SIZE, device)
                 # update target net
                 if lstep_counter % UPDATE_TARGET == 0:
                     target_qnet.load_state_dict(online_qnet.state_dict())
+                # sample exp replay buffer
+                batch_s, batch_ns, batch_a, batch_r, batch_d = exp_replay.sample_experience(BATCH_SIZE, device)
                 # compute q-target
                 q_pred = online_qnet.forward(batch_s)
                 with torch.no_grad():
@@ -148,7 +157,7 @@ def main():
         accum_steps.append(step_counter)
         if epoch_counter % 10 == 0:
             # Evaluate model using deterministic greedy policy
-            eval_rew = eval_model(online_qnet, env, N_STEPS, device)
+            eval_rew = eval_model(online_qnet, env, N_STEPS, n_actions)
             accum_eval_rew.append(eval_rew)
 
             print(f'Step Counter: {step_counter}')
