@@ -41,6 +41,11 @@ class ExperienceReplay():
     def process_vec(self, vec):
         return torch.tensor(vec).unsqueeze(0).t().long()
 
-class PrioritizedExperienceReplay():
-    def __init__(self):
-        return
+class PrioritizedExperienceReplay(ExperienceReplay):
+    """
+    Prioritized Experience Replay implemented using segment trees to store 
+    transition priorities
+    """
+    def __init__(self, max_buffer_size, n_states, is_atari=False):
+        super(PrioritizedExperienceReplay, self).__init__(max_buffer_size, n_states, is_atari)
+        
