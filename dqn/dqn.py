@@ -68,16 +68,19 @@ def main():
     # device='cpu'
     
     # Hyperparameters
-    TOTAL_TIMESTEPS = int(2e5)
+    RUN_NUM = 2
+    DDQN = False
+
+    TOTAL_TIMESTEPS = int(1e5)
     N_STEPS = 1000
     UPDATE_STEPS = 1
-    UPDATE_TARGET = 4
+    UPDATE_TARGET = 256
 
     BATCH_SIZE = 64
     BUFFER_SIZE = 10000
 
     GAMMA = 0.99
-    INIT_LR = 0.001
+    INIT_LR = 1e-3
     IS_LR_DECAY = True
     LR_DECAY = 0.000001
     INIT_EPS = 1.0
@@ -86,13 +89,19 @@ def main():
     epsilon = INIT_EPS
     lr = INIT_LR
 
+    # Create output path
+    run_path = f'../runs/run_{RUN_NUM}'
+    if not os.path.exists(run_path):
+        os.makedirs(run_path)
+
     # Initialize env
     # env = gym.make('CartPole-v1')
     env = gym.make("LunarLander-v2")
     n_states = env.observation_space.shape[0]
     n_actions = env.action_space.n
+
     # Initialize online and target q-networks and exp. replay buffer
-    online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), 
+    online_qnet = DQN(fc_size_list=[n_states, 128, 128, n_actions], activation=nn.ReLU(), 
                       lr=INIT_LR, loss_func=nn.MSELoss(), optim=torch.optim.Adam, device=device)
     target_qnet = copy.deepcopy(online_qnet)
     target_qnet.load_state_dict(online_qnet.state_dict())
@@ -106,7 +115,7 @@ def main():
     step_counter = 0
     lstep_counter = 0
     pbar = tqdm(total=TOTAL_TIMESTEPS)
-    # main training loop
+    # Main training loop
     while step_counter < TOTAL_TIMESTEPS:
         epoch_counter += 1
         # reset environment
@@ -133,21 +142,33 @@ def main():
                 # compute q-target
                 q_pred = online_qnet.forward(batch_s)
                 with torch.no_grad():
-                    q_targ_ns = target_qnet.forward(batch_ns)
-                    q_targ = torch.add(batch_r, GAMMA * (1 - batch_d) * torch.max(q_targ_ns, dim=1, keepdim=True)[0])
+                    if DDQN:
+                        # Action maximization using online qvalue of next states
+                        online_q_ns = online_qnet.forward(batch_ns)
+                        max_a_ns = torch.max(online_q_ns, dim=1, keepdim=True)[1]
+                        # Compute q-target using online max action
+                        targ_q_ns = target_qnet.forward(batch_ns)
+                        q_ns = torch.gather(targ_q_ns, 1, max_a_ns)
+                    else:
+                        # Compute q-target using target max action
+                        targ_q_ns = target_qnet.forward(batch_ns)
+                        q_ns = torch.max(targ_q_ns, dim=1, keepdim=True)[0]
+                        
+                    q_targ = torch.add(batch_r, GAMMA * (1 - batch_d) * q_ns)
                 # compute loss and backprop
                 loss = online_qnet.loss_func(q_pred.gather(dim=1, index=batch_a), q_targ).to(device)
                 online_qnet.optimizer.zero_grad()
                 loss.backward()
                 online_qnet.optimizer.step()
+                         
+            s = next_s
 
-                s = next_s
+            # Epsilon decay scheme: linearly decreasing w.r.t. # of EXPLORE steps
+            epsilon = max(FIN_EPS, epsilon - (INIT_EPS - FIN_EPS) / EXPLORE)
 
-            if epsilon > FIN_EPS:
-                epsilon -= (INIT_EPS - FIN_EPS) / EXPLORE
             if done:
                 break
-        # Learning rate decay scheduling
+        # Learning rate decay scheduling:
         if IS_LR_DECAY:
             lr = lr/(1 + LR_DECAY * epoch_counter)
             for g in online_qnet.optimizer.param_groups:
@@ -167,16 +188,26 @@ def main():
             print(f'Eval. Rew.: {eval_rew}')
             if IS_LR_DECAY:
                 print(f'LR: {lr}')
+            print(f'EPS: {epsilon}')
+
+            plt.figure()
+            plt.plot(accum_steps, accum_rew)
+            plt.ylim(-500, 200)
+            plt.savefig(run_path + '/accum_rew.png')
+            plt.close()
+            plt.plot(accum_eval_rew)
+            plt.ylim(-500, 200)
+            plt.savefig(run_path + '/accum_eval_rew.png')
 
     # Plotting
     plt.figure()
-    plt.plot(accum_steps, accum_rew)
+    plt.plot(accum_rew)
     plt.ylim(-500, 200)
-    plt.savefig('./imgs/accum_rew.png')
+    plt.savefig(run_path + '/accum_rew.png')
     plt.close()
     plt.plot(accum_eval_rew)
     plt.ylim(-500, 200)
-    plt.savefig('./imgs/accum_eval_rew.png')
+    plt.savefig(run_path + '/accum_eval_rew.png')
 
 if __name__ == '__main__':
     main()
