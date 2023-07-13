@@ -1,22 +1,24 @@
 import os, sys
+import argparse
 sys.path.append(os.getcwd())
 sys.path.append('../utils')
+import copy
+import json
+import random
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import gym
+import matplotlib
 
-import random
-import copy
-from tqdm import tqdm
 from replay_buffers import ExperienceReplay
 
-import matplotlib
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-# import envpool
 
 class DQN(nn.Module):
     def __init__(self, fc_size_list, activation, lr, loss_func, optim, device):
@@ -59,40 +61,47 @@ def eval_model(model, env, max_steps, n_actions):
         s = next_s
     return eps_rew
 
-def main():
-    SEED = 0
+def main(args):
+    # Load hyperparameters
+    RUN_NAME = args['RUN_NAME']
+    SEED = args['SEED']
+    DDQN = args['DDQN']
+    USE_GPU = args['USE_GPU']
+
+    TOTAL_TIMESTEPS = int(args['TOTAL_TIMESTEPS'])
+    N_STEPS = int(args['N_STEPS'])
+    UPDATE_STEPS = int(args['UPDATE_STEPS'])
+    UPDATE_TARGET = int(args['UPDATE_TARGET'])
+
+    BATCH_SIZE = int(args['BATCH_SIZE'])
+    BUFFER_SIZE = int(args['BUFFER_SIZE'])
+
+    GAMMA = float(args['GAMMA'])
+    INIT_LR = float(args['INIT_LR'])
+    IS_LR_DECAY = args['IS_LR_DECAY']
+    LR_DECAY = float(args['LR_DECAY'])
+    INIT_EPS = float(args['INIT_EPS'])
+    FIN_EPS = float(args['FIN_EPS'])
+    EXPLORE = int(args['EXPLORE'])
+
+    # Set seeds
     random.seed(SEED)
     torch.manual_seed(SEED)
     np.random.seed(SEED)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # device='cpu'
     
-    # Hyperparameters
-    RUN_NUM = 2
-    DDQN = False
-
-    TOTAL_TIMESTEPS = int(1e5)
-    N_STEPS = 1000
-    UPDATE_STEPS = 1
-    UPDATE_TARGET = 256
-
-    BATCH_SIZE = 64
-    BUFFER_SIZE = 10000
-
-    GAMMA = 0.99
-    INIT_LR = 1e-3
-    IS_LR_DECAY = True
-    LR_DECAY = 0.000001
-    INIT_EPS = 1.0
-    FIN_EPS = 0.01
-    EXPLORE = 80000
     epsilon = INIT_EPS
     lr = INIT_LR
 
     # Create output path
-    run_path = f'../runs/run_{RUN_NUM}'
+    run_path = f"../runs/run_{RUN_NAME}"
     if not os.path.exists(run_path):
         os.makedirs(run_path)
+
+    # Set device
+    if USE_GPU: 
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    else:
+        device = "cpu"
 
     # Initialize env
     # env = gym.make('CartPole-v1')
@@ -101,7 +110,7 @@ def main():
     n_actions = env.action_space.n
 
     # Initialize online and target q-networks and exp. replay buffer
-    online_qnet = DQN(fc_size_list=[n_states, 128, 128, n_actions], activation=nn.ReLU(), 
+    online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), 
                       lr=INIT_LR, loss_func=nn.MSELoss(), optim=torch.optim.Adam, device=device)
     target_qnet = copy.deepcopy(online_qnet)
     target_qnet.load_state_dict(online_qnet.state_dict())
@@ -166,8 +175,7 @@ def main():
             # Epsilon decay scheme: linearly decreasing w.r.t. # of EXPLORE steps
             epsilon = max(FIN_EPS, epsilon - (INIT_EPS - FIN_EPS) / EXPLORE)
 
-            if done:
-                break
+            if done: break
         # Learning rate decay scheduling:
         if IS_LR_DECAY:
             lr = lr/(1 + LR_DECAY * epoch_counter)
@@ -210,4 +218,10 @@ def main():
     plt.savefig(run_path + '/accum_eval_rew.png')
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("hparams", type=str)
+    args = parser.parse_args()
+    # Load hyperparameter json to dict.
+    with open(f"./{args.hparams}") as f:
+        hparams = json.load(f)
+    main(hparams)
