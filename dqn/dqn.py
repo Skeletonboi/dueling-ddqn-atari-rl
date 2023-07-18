@@ -3,6 +3,7 @@ import argparse
 sys.path.append(os.getcwd())
 sys.path.append('../utils')
 import copy
+import shutil
 import json
 import random
 from tqdm import tqdm
@@ -61,7 +62,7 @@ def eval_model(model, env, max_steps, n_actions):
         s = next_s
     return eps_rew
 
-def main(args):
+def main(args, run_path):
     # Load hyperparameters
     RUN_NAME = args['RUN_NAME']
     SEED = args['SEED']
@@ -91,11 +92,6 @@ def main(args):
     
     epsilon = INIT_EPS
     lr = INIT_LR
-
-    # Create output path
-    run_path = f"../runs/run_{RUN_NAME}"
-    if not os.path.exists(run_path):
-        os.makedirs(run_path)
 
     # Set device
     if USE_GPU: 
@@ -217,6 +213,9 @@ def main(args):
     plt.ylim(-500, 200)
     plt.savefig(run_path + '/accum_eval_rew.png')
 
+    # Save
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("hparams", type=str)
@@ -224,4 +223,11 @@ if __name__ == '__main__':
     # Load hyperparameter json to dict.
     with open(f"./{args.hparams}") as f:
         hparams = json.load(f)
-    main(hparams)
+    
+    # Create output dir and copy hyperparameters=
+    run_path = f"../runs/run_{hparams['RUN_NAME']}"
+    if not os.path.exists(run_path):
+        os.makedirs(run_path)
+    shutil.copy(f"./{args.hparams}", run_path + f"/{args.hparams}")
+
+    main(hparams, run_path)
