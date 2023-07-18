@@ -68,6 +68,7 @@ def main(args, run_path):
     SEED = args['SEED']
     DDQN = args['DDQN']
     USE_GPU = args['USE_GPU']
+    WINDOW = args['PLOT_WINDOW']
 
     TOTAL_TIMESTEPS = int(args['TOTAL_TIMESTEPS'])
     N_STEPS = int(args['N_STEPS'])
@@ -113,9 +114,9 @@ def main(args, run_path):
     exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, is_atari=False)
 
     # Initialize counters
-    accum_rew = []
-    accum_eval_rew = []
-    accum_steps = []
+    accum = {'rew':[],
+             'eval_rew':[],
+             'steps':[]}
     epoch_counter = 0
     step_counter = 0
     lstep_counter = 0
@@ -178,43 +179,44 @@ def main(args, run_path):
             for g in online_qnet.optimizer.param_groups:
                 g['lr'] = lr 
         # Accumulate
-        accum_rew.append(eps_rew)
-        accum_steps.append(step_counter)
-        if epoch_counter % 10 == 0:
+        accum['rew'].append(eps_rew)
+        accum['steps'].append(step_counter)
+        if epoch_counter % WINDOW == 0:
             # Evaluate model using deterministic greedy policy
             eval_rew = eval_model(online_qnet, env, N_STEPS, n_actions)
-            accum_eval_rew.append(eval_rew)
+            accum['eval_rew'].append(eval_rew)
+            rolling_rew = np.mean(accum['rew'][-WINDOW:])
 
             print(f'Step Counter: {step_counter}')
             print(f'Epoch Counter: {epoch_counter}')
             print(f'Epsilon: {epsilon}')
-            print(f'Rolling Eps. Rew.: {np.mean(accum_rew[-10:])}')
+            print(f'Rolling Eps. Rew.: {rolling_rew}')
             print(f'Eval. Rew.: {eval_rew}')
             if IS_LR_DECAY:
                 print(f'LR: {lr}')
             print(f'EPS: {epsilon}')
 
             plt.figure()
-            plt.plot(accum_steps, accum_rew)
+            plt.plot(np.convolve(accum['rew'], np.ones(WINDOW), 'valid') / WINDOW)
             plt.ylim(-500, 200)
             plt.savefig(run_path + '/accum_rew.png')
             plt.close()
-            plt.plot(accum_eval_rew)
+            plt.plot(np.convolve(accum['eval_rew'], np.ones(WINDOW), 'valid') / WINDOW)
             plt.ylim(-500, 200)
             plt.savefig(run_path + '/accum_eval_rew.png')
+            plt.close()
 
     # Plotting
     plt.figure()
-    plt.plot(accum_rew)
+    plt.plot(accum['steps'][WINDOW-1:], np.convolve(accum['rew'], np.ones(WINDOW), 'valid') / WINDOW)
     plt.ylim(-500, 200)
     plt.savefig(run_path + '/accum_rew.png')
     plt.close()
-    plt.plot(accum_eval_rew)
+    print(accum['eval_rew'])
+    plt.plot(np.convolve(accum['eval_rew'], np.ones(WINDOW), 'valid') / WINDOW)
     plt.ylim(-500, 200)
     plt.savefig(run_path + '/accum_eval_rew.png')
-
-    # Save
-
+    plt.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
