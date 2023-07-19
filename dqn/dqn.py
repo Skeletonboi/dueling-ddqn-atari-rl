@@ -14,12 +14,11 @@ import torch.nn.functional as F
 import numpy as np
 import gym
 import matplotlib
-
-from replay_buffers import ExperienceReplay
-
-
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+from replay_buffers import ExperienceReplay
+from plot import plot_rewards
 
 class DQN(nn.Module):
     def __init__(self, fc_size_list, activation, lr, loss_func, optim, device):
@@ -51,9 +50,9 @@ class DQN(nn.Module):
             a = torch.argmax(self.forward(torch.from_numpy(s).to(self.device))).item()
         return a
 
-def eval_model(model, env, max_steps, n_actions):
+def eval_model(model, env, max_steps, n_actions, env_seed):
     eps_rew = 0
-    s, _ = env.reset()
+    s, _ = env.reset(seed=env_seed)
     for i in range(max_steps):
         a = model.sample_discrete_action(s, -1, n_actions)
         next_s, rew, done, _, _ = env.step(a)
@@ -90,6 +89,7 @@ def main(args, run_path):
     random.seed(SEED)
     torch.manual_seed(SEED)
     np.random.seed(SEED)
+    env_seed = np.random.randint(0,100)
     
     epsilon = INIT_EPS
     lr = INIT_LR
@@ -125,7 +125,7 @@ def main(args, run_path):
     while step_counter < TOTAL_TIMESTEPS:
         epoch_counter += 1
         # reset environment
-        s, _ = env.reset()
+        s, _ = env.reset(seed=env_seed)
         eps_rew = 0
         # train one episode
         for i in range(N_STEPS):
@@ -183,7 +183,7 @@ def main(args, run_path):
         accum['steps'].append(step_counter)
         if epoch_counter % WINDOW == 0:
             # Evaluate model using deterministic greedy policy
-            eval_rew = eval_model(online_qnet, env, N_STEPS, n_actions)
+            eval_rew = eval_model(online_qnet, env, N_STEPS, n_actions, env_seed)
             accum['eval_rew'].append(eval_rew)
             rolling_rew = np.mean(accum['rew'][-WINDOW:])
 
@@ -196,27 +196,7 @@ def main(args, run_path):
                 print(f'LR: {lr}')
             print(f'EPS: {epsilon}')
 
-            plt.figure()
-            plt.plot(np.convolve(accum['rew'], np.ones(WINDOW), 'valid') / WINDOW)
-            plt.ylim(-500, 200)
-            plt.savefig(run_path + '/accum_rew.png')
-            plt.close()
-            plt.plot(np.convolve(accum['eval_rew'], np.ones(WINDOW), 'valid') / WINDOW)
-            plt.ylim(-500, 200)
-            plt.savefig(run_path + '/accum_eval_rew.png')
-            plt.close()
-
-    # Plotting
-    plt.figure()
-    plt.plot(accum['steps'][WINDOW-1:], np.convolve(accum['rew'], np.ones(WINDOW), 'valid') / WINDOW)
-    plt.ylim(-500, 200)
-    plt.savefig(run_path + '/accum_rew.png')
-    plt.close()
-    print(accum['eval_rew'])
-    plt.plot(np.convolve(accum['eval_rew'], np.ones(WINDOW), 'valid') / WINDOW)
-    plt.ylim(-500, 200)
-    plt.savefig(run_path + '/accum_eval_rew.png')
-    plt.close()
+            plot_rewards(accum, WINDOW, run_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
