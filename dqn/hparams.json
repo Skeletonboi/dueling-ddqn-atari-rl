@@ -1,8 +1,9 @@
 {
-    "RUN_NAME" : "test",
+    "RUN_NAME" : "ddqn_default",
     "SEED" : 0,
     "DDQN" : true,
     "USE_GPU" : true,
+    "PLOT_WINDOW" : 10,
 
     "TOTAL_TIMESTEPS" : 1e6,
     "N_STEPS" : 1000,
