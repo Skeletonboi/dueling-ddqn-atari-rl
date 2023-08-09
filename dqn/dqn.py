@@ -66,6 +66,9 @@ def main(args, run_path):
     RUN_NAME = args['RUN_NAME']
     SEED = args['SEED']
     DDQN = args['DDQN']
+    PER = args['PER']
+    PER_ALPHA = args['PER_ALPHA']
+    PER_BETA = args['PER_BETA']
     USE_GPU = args['USE_GPU']
     WINDOW = args['PLOT_WINDOW']
 
@@ -111,7 +114,7 @@ def main(args, run_path):
                       lr=INIT_LR, loss_func=nn.MSELoss(), optim=torch.optim.Adam, device=device)
     target_qnet = copy.deepcopy(online_qnet)
     target_qnet.load_state_dict(online_qnet.state_dict())
-    exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, is_atari=False)
+    exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, PER_ALPHA, PER_BETA, is_atari=False)
 
     # Initialize counters
     accum = {'rew':[],
@@ -144,7 +147,7 @@ def main(args, run_path):
                 if lstep_counter % UPDATE_TARGET == 0:
                     target_qnet.load_state_dict(online_qnet.state_dict())
                 # sample exp replay buffer
-                batch_s, batch_ns, batch_a, batch_r, batch_d = exp_replay.sample_experience(BATCH_SIZE, device)
+                batch_s, batch_ns, batch_a, batch_r, batch_d, batch_idx, batch_isw = exp_replay.sample_experience(BATCH_SIZE, device)
                 # compute q-target
                 q_pred = online_qnet.forward(batch_s)
                 with torch.no_grad():
@@ -163,10 +166,16 @@ def main(args, run_path):
                     q_targ = torch.add(batch_r, GAMMA * (1 - batch_d) * q_ns)
                 # compute loss and backprop
                 loss = online_qnet.loss_func(q_pred.gather(dim=1, index=batch_a), q_targ).to(device)
+                if PER:
+                    # Update PER priorities with new TD-loss
+                    exp_replay.update_priorities(batch_idx, loss)
+                    # Multiply importance-sampling weights
+                    loss = loss*batch_isw
                 online_qnet.optimizer.zero_grad()
                 loss.backward()
                 online_qnet.optimizer.step()
-                         
+
+
             s = next_s
 
             # Epsilon decay scheme: linearly decreasing w.r.t. # of EXPLORE steps
