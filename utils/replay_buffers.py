@@ -29,7 +29,7 @@ class ExperienceReplay():
         self.counter += 1
     
     def get_sample_idxs(self, batch_size):
-        return np.random.choice(min(self.counter, self.max_buffer_size), batch_size)
+        return np.random.choice(self.size(), batch_size)
     
     def sample_experience(self, batch_size, device):    
         idxs = self.get_sample_idxs(batch_size)
@@ -40,10 +40,13 @@ class ExperienceReplay():
         batch_r = self.process_vec(self.reward_mem[idxs]).to(device)
         batch_d = self.process_vec(self.done_mem[idxs]).to(device)
         
-        return batch_s, batch_ns, batch_a, batch_r, batch_d, idxs
+        return batch_s, batch_ns, batch_a, batch_r, batch_d, idxs, None
 
     def process_vec(self, vec):
         return torch.tensor(vec).unsqueeze(0).t().long()
+
+    def size(self):
+        return min(self.counter, self.max_buffer_size)
 
 class PrioritizedExperienceReplay(ExperienceReplay):
     """
@@ -59,15 +62,16 @@ class PrioritizedExperienceReplay(ExperienceReplay):
     trees) to store the sum and min of the priorities. This allows O(1) extract and O(logN) 
     updating of priorities.
     """
-    def __init__(self, max_buffer_size, n_states, alpha=0.6, is_atari=False):
+    def __init__(self, max_buffer_size, n_states, alpha=0.2, beta=0.6, is_atari=False):
         super(PrioritizedExperienceReplay, self).__init__(max_buffer_size, n_states, is_atari)
         self.max_prio = 1
         self.alpha = alpha
+        self.beta = beta
         # N leaf nodes means 2N-1 tree space. We initialize 2N space here and ignore 
         # the first index for this reason and also for convenience of tree-indexing.
         # Root node is at idx = 1
-        self.sum_tree = [0 for i in range(self.max_buffer_size*2)]
-        self.min_tree = [np.inf for i in range(self.max_buffer_size*2)]
+        self.sum_tree = np.zeros(self.max_buffer_size*2)
+        self.min_tree = np.full(self.max_buffer_size*2, np.inf)
 
     def insert(self, state, n_state, action, reward, done):
         # Insert into buffer
@@ -89,23 +93,38 @@ class PrioritizedExperienceReplay(ExperienceReplay):
 
     def get_sample_idxs(self, batch_size):
         probs = np.random.random(batch_size)*self.sum_tree[1]
+        idxs = np.zeros(batch_size)
         for batch_i in range(batch_size):
             # Run binary search to find corresponding leaf node in tree
             i = 1
             while i < self.max_buffer_size*2:
-                if self.sum_tree[i] > p:
+                if self.sum_tree[i] > probs[batch_i]:
                     i = i*2
                 else:
                     i = i*2+1
-            probs[batch_i] = i
-        return probs
+            idxs[batch_i] = i
+        return idxs
 
     def sample_experience(self, batch_size, device):
-        batch_s, batch_ns, batch_a, batch_r, batch_d, idxs = super().sample_experience(batch_size, device)
-        
-        return 
+        batch_s, batch_ns, batch_a, batch_r, batch_d, idxs, _ = super().sample_experience(batch_size, device)
+        # Compute max IS weight for normalization
+        min_prob = self.min_tree[1]/self.sum_tree[1]
+        max_isw = (1/(self.size()*min_prob))**self.beta
+        # Compute IS weights for batch
+        weights = np.zeros(batch_size)
+        for i in range(batch_size):
+            leaf_idx = idxs[i] + self.max_buffer_size
+            p = self.sum_tree[leaf_idx]/self.sum_tree[1]
+            isw = (1/(self.size()*p))**self.beta
+            weights[i] = isw/max_isw
 
-    def update_priorities(self, batch, priorities):
+        return batch_s, batch_ns, batch_a, batch_r, batch_d, idxs, weights
+
+
+    def update_priorities(self, idxs, priorities):
+        assert len(idxs) == len(priorities)
+
+        for i in range(len(idxs)):
+            self.max_prio = max(self.max_prio, priorities[i])
+            self.update_sum_min_tree(priorities[i]**self.alpha)
         return
-
-
