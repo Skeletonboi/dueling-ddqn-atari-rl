@@ -17,7 +17,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from replay_buffers import ExperienceReplay
+from replay_buffers import ExperienceReplay, PrioritizedExperienceReplay
 from plot import plot_rewards
 
 class DQN(nn.Module):
@@ -111,11 +111,13 @@ def main(args, run_path):
 
     # Initialize online and target q-networks and exp. replay buffer
     online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), 
-                      lr=INIT_LR, loss_func=nn.MSELoss(), optim=torch.optim.Adam, device=device)
+                      lr=INIT_LR, loss_func=nn.MSELoss(reduction="none"), optim=torch.optim.Adam, device=device)
     target_qnet = copy.deepcopy(online_qnet)
     target_qnet.load_state_dict(online_qnet.state_dict())
-    exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, PER_ALPHA, PER_BETA, is_atari=False)
-
+    if PER:
+        exp_replay = PrioritizedExperienceReplay(BUFFER_SIZE, n_states, PER_ALPHA, PER_BETA, is_atari=False)
+    else:
+        exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, is_atari=False)
     # Initialize counters
     accum = {'rew':[],
              'eval_rew':[],
@@ -170,11 +172,14 @@ def main(args, run_path):
                     # Update PER priorities with new TD-loss
                     exp_replay.update_priorities(batch_idx, loss)
                     # Multiply importance-sampling weights
-                    loss = loss*batch_isw
+                    # print(loss)
+                    # print(batch_isw)
+                    loss = torch.mean(loss*batch_isw)
+                else:
+                    loss = torch.mean(loss)
                 online_qnet.optimizer.zero_grad()
                 loss.backward()
                 online_qnet.optimizer.step()
-
 
             s = next_s
 
