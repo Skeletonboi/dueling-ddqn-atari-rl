@@ -67,6 +67,7 @@ class PrioritizedExperienceReplay(ExperienceReplay):
         self.max_prio = 1
         self.alpha = alpha
         self.beta = beta
+        self.prior_eps = 1e-6
         # N leaf nodes means 2N-1 tree space. We initialize 2N space here and ignore 
         # the first index for this reason and also for convenience of tree-indexing.
         # Root node is at idx = 1
@@ -87,22 +88,25 @@ class PrioritizedExperienceReplay(ExperienceReplay):
 
         while node_idx > 1:
             node_idx = node_idx//2
-            self.sum_tree[node_idx] = sum(self.sum_tree[2*node_idx], self.sum_tree[2*node_idx+1])
+            self.sum_tree[node_idx] = self.sum_tree[2*node_idx] + self.sum_tree[2*node_idx+1]
             self.min_tree[node_idx] = min(self.min_tree[2*node_idx], self.min_tree[2*node_idx+1])
         return
 
     def get_sample_idxs(self, batch_size):
         probs = np.random.random(batch_size)*self.sum_tree[1]
-        idxs = np.zeros(batch_size)
+        idxs = np.zeros(batch_size).astype(int)
         for batch_i in range(batch_size):
             # Run binary search to find corresponding leaf node in tree
+            p = probs[batch_i]
             i = 1
-            while i < self.max_buffer_size*2:
-                if self.sum_tree[i] > probs[batch_i]:
+            while i < self.max_buffer_size:
+                if self.sum_tree[i*2] > p:
                     i = i*2
                 else:
+                    p = p - self.sum_tree[i*2]
                     i = i*2+1
-            idxs[batch_i] = i
+            idxs[batch_i] = i - self.max_buffer_size
+
         return idxs
 
     def sample_experience(self, batch_size, device):
@@ -117,14 +121,14 @@ class PrioritizedExperienceReplay(ExperienceReplay):
             p = self.sum_tree[leaf_idx]/self.sum_tree[1]
             isw = (1/(self.size()*p))**self.beta
             weights[i] = isw/max_isw
+        weights = torch.from_numpy(weights).to(device)
 
         return batch_s, batch_ns, batch_a, batch_r, batch_d, idxs, weights
 
-
     def update_priorities(self, idxs, priorities):
-        assert len(idxs) == len(priorities)
-
+        priorities = priorities
         for i in range(len(idxs)):
-            self.max_prio = max(self.max_prio, priorities[i])
-            self.update_sum_min_tree(priorities[i]**self.alpha)
+            prio = priorities[i] + self.prior_eps
+            self.max_prio = max(self.max_prio, prio)
+            self.update_sum_min_tree(prio**self.alpha)
         return
