@@ -17,38 +17,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+from networks import DQN, DuelingDQN
 from replay_buffers import ExperienceReplay, PrioritizedExperienceReplay
 from plot import plot_rewards
-
-class DQN(nn.Module):
-    def __init__(self, fc_size_list, activation, lr, loss_func, optim, device):
-        super(DQN, self).__init__()
-        self.fc_net = self.create_fc_net(fc_size_list, activation)
-
-        self.loss_func = loss_func
-        self.optimizer = optim(self.parameters(), lr=lr)
-        self.device = device
-        self.to(device)
-
-    def create_fc_net(self, fc_size_list, activation):
-        fc_layers = []
-        for i in range(len(fc_size_list)-1):
-            layer = nn.Linear(fc_size_list[i], fc_size_list[i+1])
-            if i == len(fc_size_list) - 2:
-                activation = nn.Identity()
-            fc_layers += ((layer, activation))
-        return nn.Sequential(*fc_layers)
-
-    def forward(self, x):
-        q = self.fc_net(x)
-        return q
-
-    def sample_discrete_action(self, s, epsilon, n_actions):
-        if np.random.uniform(0,1) < epsilon:
-            a = np.random.choice(n_actions)
-        else:
-            a = torch.argmax(self.forward(torch.from_numpy(s).to(self.device))).item()
-        return a
 
 def eval_model(model, env, max_steps, n_actions, env_seed):
     eps_rew = 0
@@ -66,11 +37,12 @@ def main(args, run_path):
     RUN_NAME = args['RUN_NAME']
     SEED = args['SEED']
     DDQN = args['DDQN']
+    DUELING = args['DUELING']
     PER = args['PER']
     PER_ALPHA = args['PER_ALPHA']
     PER_BETA = args['PER_BETA']
     USE_GPU = args['USE_GPU']
-    WINDOW = args['PLOT_WINDOW']
+    PLOT_INTERVAL = args['PLOT_INTERVAL']
 
     TOTAL_TIMESTEPS = int(args['TOTAL_TIMESTEPS'])
     N_STEPS = int(args['N_STEPS'])
@@ -109,16 +81,24 @@ def main(args, run_path):
     n_states = env.observation_space.shape[0]
     n_actions = env.action_space.n
 
-    # Initialize online and target q-networks and exp. replay buffer
-    online_qnet = DQN(fc_size_list=[n_states, 64, 64, n_actions], activation=nn.ReLU(), 
-                      lr=INIT_LR, loss_func=nn.MSELoss(reduction="none"), optim=torch.optim.Adam, device=device)
+    # Initialize online q-net
+    if DUELING:
+        net = DuelingDQN
+    else:
+        net = DQN
+    online_qnet = net(n_states, n_actions, activation=nn.ReLU(), lr=INIT_LR, 
+                      loss_func=nn.MSELoss(reduction="none"), optim=torch.optim.Adam, device=device)
+    # Initialize target q-net
     target_qnet = copy.deepcopy(online_qnet)
     target_qnet.load_state_dict(online_qnet.state_dict())
+
+    # Initialize replay buffer
     if PER:
         exp_replay = PrioritizedExperienceReplay(BUFFER_SIZE, n_states, PER_ALPHA, PER_BETA, is_atari=False)
     else:
         exp_replay = ExperienceReplay(BUFFER_SIZE, n_states, is_atari=False)
-    # Initialize counters
+    
+    # Main training loop
     accum = {'rew':[],
              'eval_rew':[],
              'steps':[]}
@@ -126,10 +106,9 @@ def main(args, run_path):
     step_counter = 0
     lstep_counter = 0
     pbar = tqdm(total=TOTAL_TIMESTEPS)
-    # Main training loop
     while step_counter < TOTAL_TIMESTEPS:
         epoch_counter += 1
-        # reset environment
+        # reset env
         s, _ = env.reset(seed=env_seed)
         eps_rew = 0
         # train one episode
@@ -164,7 +143,6 @@ def main(args, run_path):
                         # Compute q-target using target max action
                         targ_q_ns = target_qnet.forward(batch_ns)
                         q_ns = torch.max(targ_q_ns, dim=1, keepdim=True)[0]
-                        
                     q_targ = torch.add(batch_r, GAMMA * (1 - batch_d) * q_ns)
                 # compute loss and backprop
                 loss = online_qnet.loss_func(q_pred.gather(dim=1, index=batch_a), q_targ).to(device)
@@ -172,8 +150,6 @@ def main(args, run_path):
                     # Update PER priorities with new TD-loss
                     exp_replay.update_priorities(batch_idx, loss)
                     # Multiply importance-sampling weights
-                    # print(loss)
-                    # print(batch_isw)
                     loss = torch.mean(loss*batch_isw)
                 else:
                     loss = torch.mean(loss)
@@ -181,25 +157,30 @@ def main(args, run_path):
                 loss.backward()
                 online_qnet.optimizer.step()
 
-            s = next_s
-
             # Epsilon decay scheme: linearly decreasing w.r.t. # of EXPLORE steps
             epsilon = max(FIN_EPS, epsilon - (INIT_EPS - FIN_EPS) / EXPLORE)
+            # PER Beta decay
+            if PER:
+                fraction = step_counter / TOTAL_TIMESTEPS
+                exp_replay.beta = exp_replay.beta + fraction * (1.0 - exp_replay.beta)
 
+            s = next_s
             if done: break
+        
         # Learning rate decay scheduling:
         if IS_LR_DECAY:
             lr = lr/(1 + LR_DECAY * epoch_counter)
             for g in online_qnet.optimizer.param_groups:
                 g['lr'] = lr 
+
         # Accumulate
         accum['rew'].append(eps_rew)
         accum['steps'].append(step_counter)
-        if epoch_counter % WINDOW == 0:
+        if epoch_counter % PLOT_INTERVAL == 0:
             # Evaluate model using deterministic greedy policy
             eval_rew = eval_model(online_qnet, env, N_STEPS, n_actions, env_seed)
             accum['eval_rew'].append(eval_rew)
-            rolling_rew = np.mean(accum['rew'][-WINDOW:])
+            rolling_rew = np.mean(accum['rew'][-PLOT_INTERVAL:])
 
             print(f'Step Counter: {step_counter}')
             print(f'Epoch Counter: {epoch_counter}')
@@ -210,7 +191,7 @@ def main(args, run_path):
                 print(f'LR: {lr}')
             print(f'EPS: {epsilon}')
 
-            plot_rewards(accum, WINDOW, run_path)
+            plot_rewards(accum, PLOT_INTERVAL, run_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -221,7 +202,7 @@ if __name__ == '__main__':
         hparams = json.load(f)
     
     # Create output dir and copy hyperparameters=
-    run_path = f"../runs/run_{hparams['RUN_NAME']}"
+    run_path = f"../runs/{hparams['RUN_NAME']}"
     if not os.path.exists(run_path):
         os.makedirs(run_path)
     shutil.copy(f"./{args.hparams}", run_path + f"/{args.hparams}")
