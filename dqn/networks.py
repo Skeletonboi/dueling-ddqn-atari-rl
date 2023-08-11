@@ -39,7 +39,7 @@ class DuelingDQN(nn.Module):
         super(DuelingDQN, self).__init__()
         self.n_states = n_states
         self.n_actions = n_actions
-        self.act = activation
+        self.activation = activation
 
         self.create_fc_net()
 
@@ -50,18 +50,25 @@ class DuelingDQN(nn.Module):
 
     def create_fc_net(self):
         # initial feature layer
-        self.l1 = nn.Linear(self.n_states, 64)
-        self.l2 = nn.Linear(64, 64)
+        self.l_net = nn.Sequential(
+            nn.Linear(self.n_states, 64),
+            self.activation)
         # advantage layer
-        self.a1 = nn.Linear(64, self.n_actions)
+        self.a_net = nn.Sequential(
+            nn.Linear(64, 64),
+            self.activation,
+            nn.Linear(64, self.n_actions))
+
         # state value layer
-        self.v1 = nn.Linear(64, 1)
+        self.v_net = nn.Sequential(
+            nn.Linear(64, 64),
+            self.activation,
+            nn.Linear(64, 1))
         
     def forward(self, x):
-        f1 = self.act(self.l1(x))
-        f2 = self.act(self.l2(f1))
-        adv = self.act(self.a1(f2))
-        val = self.act(self.v1(f2))
+        f = self.l_net(x)
+        adv = self.a_net(f)
+        val = self.v_net(f)
 
         q = val + (adv - torch.mean(adv))
         return q
