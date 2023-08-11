@@ -1,16 +1,17 @@
 {
-    "RUN_NAME" : "ddqn_per",
+    "RUN_NAME" : "duel_4",
     "SEED" : 0,
-    "DDQN" : true,
-    "PER" : true, 
+    "DDQN" : false,
+    "DUELING" : true,
+    "PER" : false, 
     "PER_ALPHA" : 0.2,
     "PER_BETA" : 0.6,
     "USE_GPU" : true,
-    "PLOT_WINDOW" : 10,
+    "PLOT_INTERVAL" : 10,
 
     "TOTAL_TIMESTEPS" : 1e6,
     "N_STEPS" : 1000,
-    "UPDATE_STEPS" : 64,
+    "UPDATE_STEPS" : 4,
     "UPDATE_TARGET" : 256,
 
     "BATCH_SIZE" : 64,
